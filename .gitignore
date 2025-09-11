@@ -1,0 +1,46 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# --- Virtual Environment ---
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Jupyter Notebook Checkpoints (if you use them) ---
+.ipynb_checkpoints/
+
+# --- IDE Config ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS-specific files ---
+.DS_Store
+Thumbs.db
+
+# --- Streamlit Cache ---
+.streamlit/
+.streamlit_cache/
+
+# --- Logs ---
+*.log
+
+# --- Audio/Transcripts (if sensitive) ---
+recordings/
+transcripts/
+
+# --- API Keys / Secrets ---
+.env
+*.key
+*.pem

@@ -1,0 +1,19 @@
+# requirements.txt
+
+# Core Web App
+streamlit>=1.35.0
+
+# AI / Speech-to-Text
+openai-whisper>=20231117
+# or use 'whisper' if that's what you installed
+# parakeet (if you're using it) can be added here as well
+
+# Google Generative AI (Gemini)
+google-generativeai>=0.5.0
+
+# Environment Variables
+python-dotenv>=1.0.1
+
+# Audio handling
+sounddevice>=0.4.6
+numpy>=1.26.0
