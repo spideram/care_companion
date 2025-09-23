@@ -23,6 +23,10 @@ Notes:
 - Whisper base model (~142MB) is the default; change in the sidebar for quality/speed.
 - "End-to-end" encryption here demonstrates encrypting payloads before API calls. Real HIPAA-grade E2EE,
   logging controls, BAA-backed hosting, and audit trails will be a next phase.
+- Simplify UI
+- Speed it up
+- Hide trancsript
+- Put things on one screen
 """
 
 import io
@@ -117,14 +121,14 @@ def run_gemini_chat(model, transcript: str, user_prompt: str, system_preamble: s
 
     ---
     Encounter transcript (verbatim):
-    """
     {transcript}
-    """
+
     ---
     User request: {user_prompt}
 
     Return a concise, clinically useful answer with bullet points when appropriate.
     """
+
     try:
         resp = model.generate_content(prompt)
         return resp.text.strip()
