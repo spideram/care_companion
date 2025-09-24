@@ -250,17 +250,18 @@ if "messages" not in st.session_state:
     st.session_state.messages = []  # type List[Dict[str, str]]
 
 # Tabs for flow
-rec_tab, chat_tab = st.tabs(["1) Capture & Transcribe", "2) Focused Clinical Chat"])
+rec_tab, chat_tab = st.tabs(["1) Capture Audio", "2) Focused Clinical Chat"])
 
 with rec_tab:
     st.subheader("Capture audio")
-    st.write(
-        "Record directly in the browser or upload a .wav/.mp3. For longer recordings, uploading a file is more reliable."
-    )
+    st.write("Record directly in the browser or upload a .wav/.mp3. Uploading may be more reliable for long recordings.")
 
     # Prefer native mic input if available
     audio_data = st.audio_input("Record up to ~60 seconds")
-    uploaded = st.file_uploader("…or upload an audio file", type=["wav", "mp3", "m4a", "ogg", "webm"])  # ffmpeg recommended
+    uploaded = st.file_uploader(
+        "…or upload an audio file",
+        type=["wav", "mp3", "m4a", "ogg", "webm"]
+    )
 
     # Choose source priority: uploaded > mic (if both present)
     source_label = None
@@ -270,51 +271,42 @@ with rec_tab:
         raw_bytes = uploaded.read()
         source_label = f"Uploaded file: {uploaded.name}"
     elif audio_data is not None:
-        # audio_input returns a BytesIO-like object
         raw_bytes = audio_data.getvalue() if hasattr(audio_data, "getvalue") else bytes(audio_data)
         source_label = "Browser recording"
 
-    st.write(
-        "**Selected source:** ", source_label if source_label else "None yet"
-    )
+    st.write("**Selected source:** ", source_label if source_label else "None yet")
 
-    if st.button("Transcribe", type="primary", disabled=(raw_bytes is None)):
-        if raw_bytes is None:
-            st.warning("Please record or upload audio first.")
-        else:
-            with st.spinner("Transcribing with Whisper…"):
-                # Save to a temp file; Whisper uses ffmpeg under the hood, so any common type is fine if ffmpeg is present
-                suffix = ".wav" if (uploaded and uploaded.name.lower().endswith(".wav")) else ".mp3"
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                    tmp.write(raw_bytes)
-                    tmp_path = tmp.name
+    # Automatically transcribe if we got audio
+    if raw_bytes is not None:
+        with st.spinner("Transcribing with Whisper…"):
+            suffix = ".wav" if (uploaded and uploaded.name.lower().endswith(".wav")) else ".mp3"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(raw_bytes)
+                tmp_path = tmp.name
+            try:
+                text = transcribe_audio(tmp_path, model_size=whisper_size)
+            finally:
                 try:
-                    text = transcribe_audio(tmp_path, model_size=whisper_size)
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
 
-            st.session_state.transcript = text
-            st.success("Transcription complete.")
-
-    st.text_area("Transcript (editable)", key="transcript", height=240)
-
-    st.info(
-        "Tip: You can edit the transcript before moving to the chat tab. This helps correct any ASR errors."
-    )
+        st.session_state.transcript = text
+        st.success("Transcription complete and ready for chat.")
 
 with chat_tab:
-    st.subheader("Focused clinical chat over the transcript")
+    st.subheader("Focused clinical chat over the encounter")
 
     # Prompt template selection
     template = st.selectbox("Prompt template", list(TEMPLATES.keys()), index=0)
-    system_preamble = st.text_area("System preamble (prompt engineering)", value=DEFAULT_SYSTEM_PROMPT, height=120)
+    system_preamble = st.text_area(
+        "System preamble (prompt engineering)",
+        value=DEFAULT_SYSTEM_PROMPT,
+        height=120,
+    )
 
-    # Show current transcript for context
-    with st.expander("Show transcript context"):
-        st.write(st.session_state.transcript or "(No transcript yet)")
+    # 🚫 Removed transcript display
+    # (we still store it in session_state, but don't show it)
 
     # Initialize Gemini (once per session) if requested
     gemini_model = init_gemini() if use_gemini else None
@@ -327,18 +319,19 @@ with chat_tab:
             st.markdown(m.get("content", ""))
 
     user_msg = st.chat_input("Ask something about this encounter (e.g., 'Summarize main concerns')")
-
     if user_msg:
         st.session_state.messages.append({"role": "user", "content": user_msg})
 
+        with st.chat_message("user"):
+            st.markdown(user_msg)
+        
         # Encrypt transcript payload (demo)
         f = get_fernet(custom_key if custom_key else None) if enc_enabled else None
         encrypted_payload = maybe_encrypt_text(st.session_state.transcript, enc_enabled, f)
 
-        # "Send" to AI and decrypt on the other side (demo only)
         decrypted_for_ai = maybe_decrypt_text(encrypted_payload, enc_enabled, f)
-
         system_goal = f"Template: {template}\n\n{TEMPLATES[template]}"
+
         with st.chat_message("assistant"):
             with st.spinner("Thinking…"):
                 answer = run_gemini_chat(
