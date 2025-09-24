@@ -188,6 +188,28 @@ def maybe_decrypt_text(blob: bytes, enabled: bool, f: Optional[Fernet]) -> str: 
 
 # ===================== UI =====================
 st.set_page_config(page_title="Provider Comms MVP", page_icon="🎙️", layout="wide")
+
+# 🔶 Disclaimer at the very top
+st.markdown(
+    """
+    <div style="background-color:#000000; color:#ffffff; border:1px solid #444; padding:15px; border-radius:10px;">
+    <strong>⚠️ Disclaimer:</strong><br>
+    This application records and transcribes audio for the purpose of generating a summary.
+    Please ensure you have permission before recording anyone else's voice or sharing private information.
+    <br><br>
+    • <b>No recordings are stored</b> — audio and transcripts are processed in real time.<br>
+    • <b>Use at your own discretion</b> — this tool is for informational purposes only and is not a substitute for professional medical advice.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Optional: Require agreement before continuing
+agree = st.checkbox("I understand and agree to the recording disclaimer above.")
+if not agree:
+    st.warning("You must agree to the disclaimer before using this app.")
+    st.stop()
+
 st.title("🎙️ Provider Communication Assistant — MVP")
 st.caption("Prototype: microphone → transcript → focused clinical chat")
 
