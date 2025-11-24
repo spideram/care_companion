@@ -1,19 +1,22 @@
-# requirements.txt
-
 # Core Web App
-streamlit>=1.35.0
+streamlit>=1.36.0
 
-# AI / Speech-to-Text
-openai-whisper>=20231117
-# or use 'whisper' if that's what you installed
-# parakeet (if you're using it) can be added here as well
+# Speech-to-Text
+faster-whisper>=1.0.3          # Local transcription (prototype)
+assemblyai>=0.30.0             # Cloud transcription (production) - optional
 
-# Google Generative AI (Gemini)
-google-generativeai>=0.5.0
+# Audio Recording Component
+audio-recorder-streamlit>=0.0.8  # Fast audio recording widget
 
-# Environment Variables
-python-dotenv>=1.0.1
+# Google Gemini AI
+google-generativeai>=0.5.0     # AI chat and summarization
 
-# Audio handling
-sounddevice>=0.4.6
-numpy>=1.26.0
+# Audio Processing
+soundfile>=0.12.1              # Audio file reading/conversion
+numpy>=1.26.0                  # Audio array processing
+
+# Security & Encryption
+cryptography>=41.0.0           # In-memory encryption for transcripts
+
+# Environment Configuration
+python-dotenv>=1.0.1           # .env file support

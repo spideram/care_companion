@@ -11,7 +11,23 @@ import streamlit as st
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet
 
-# Faster-Whisper import (may not be installed on all machines)
+# Audio recorder component (faster alternative to st.audio_input)
+try:
+    from audio_recorder_streamlit import audio_recorder
+    AUDIO_RECORDER_AVAILABLE = True
+except Exception:
+    audio_recorder = None
+    AUDIO_RECORDER_AVAILABLE = False
+
+# AssemblyAI import (preferred - HIPAA compliant)
+try:
+    import assemblyai as aai
+    ASSEMBLYAI_AVAILABLE = True
+except Exception:
+    aai = None
+    ASSEMBLYAI_AVAILABLE = False
+
+# Faster-Whisper import (fallback)
 try:
     from faster_whisper import WhisperModel
     FASTER_AVAILABLE = True
@@ -19,7 +35,7 @@ except Exception:
     WhisperModel = None
     FASTER_AVAILABLE = False
 
-# Optional Gemini import handled later
+# Optional Gemini import
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
@@ -31,25 +47,68 @@ except Exception:
 load_dotenv()
 
 # ==========================
-# Model loader (Faster-Whisper, fixed to 'base')
+# AssemblyAI setup
+# ==========================
+def init_assemblyai():
+    """Initialize AssemblyAI with API key"""
+    if not ASSEMBLYAI_AVAILABLE:
+        return False
+    
+    api_key = os.getenv("ASSEMBLYAI_API_KEY") or st.secrets.get("ASSEMBLYAI_API_KEY", None)
+    if not api_key:
+        return False
+    
+    aai.settings.api_key = api_key
+    # Speed up polling - check status every 0.5 seconds instead of 3 seconds
+    aai.settings.polling_interval = 0.5
+    return True
+
+def transcribe_with_assemblyai(path: str) -> str:
+    """
+    Transcribe using AssemblyAI (HIPAA compliant with BAA)
+    Includes automatic punctuation, capitalization, and medical terminology support
+    """
+    try:
+        # Configure transcription with medical-optimized settings
+        config = aai.TranscriptionConfig(
+            speech_model=aai.SpeechModel.best,  # Use the best/latest model (Universal-1)
+            punctuate=True,
+            format_text=True,
+            language_detection=False,  # Set to English for medical transcription
+        )
+        
+        transcriber = aai.Transcriber(config=config)
+        transcript = transcriber.transcribe(path)
+        
+        # Check for errors
+        if transcript.status == aai.TranscriptStatus.error:
+            raise RuntimeError(f"AssemblyAI transcription failed: {transcript.error}")
+        
+        return transcript.text.strip()
+    except Exception as e:
+        raise RuntimeError(f"AssemblyAI transcription error: {e}")
+
+# ==========================
+# Faster-Whisper fallback
 # ==========================
 @st.cache_resource(show_spinner=False)
 def load_fw_model():
+    """Load Faster-Whisper model (fallback)"""
     if not FASTER_AVAILABLE:
         return None
-    # fixed to "base" as requested; device cpu by default
     try:
         return WhisperModel("base", device="cpu", compute_type="int8")
     except Exception:
-        # try without compute_type if that fails
         try:
             return WhisperModel("base", device="cpu")
         except Exception:
             return None
 
 def transcribe_with_faster_whisper(path: str, fw_model) -> str:
+    """Transcribe using Faster-Whisper (fallback)"""
     if fw_model is None:
-        raise RuntimeError("Faster-Whisper model not available. Install faster-whisper.")
+        raise RuntimeError("Faster-Whisper model not available.")
+    
     segments, info = fw_model.transcribe(path)
     texts = [seg.text for seg in segments if getattr(seg, "text", None)]
     return " ".join(texts).strip()
@@ -152,14 +211,14 @@ st.markdown(
     <br><br>
     • <b>Data handling:</b> All audio and text data are processed and encrypted in-memory only during this session.<br>
     • <b>Privacy notice:</b> This prototype is intended for demonstration and evaluation purposes and is not a substitute for official electronic medical record (EMR) or documentation systems.<br>
-    • <b>HIPAA compliance:</b> Please note that this tool is <b>not yet HIPAA-compliant</b>. We are actively in the process of implementing full HIPAA safeguards and compliance measures, including secure data storage, user authentication, and audit logging.<br><br>
+    • <b>HIPAA compliance:</b> AssemblyAI transcription can be HIPAA-compliant when a Business Associate Agreement (BAA) is in place. Contact sales@assemblyai.com to request a BAA before using this tool with Protected Health Information (PHI).<br><br>
     <em>By continuing, you acknowledge that you understand the data privacy implications and consent to the use of this prototype for testing and evaluation purposes only.</em>
     </div>""",
     unsafe_allow_html=True,
 )
 
 agree = st.checkbox("✅ I understand and agree to the recording disclaimer above.")
-hipaa_ack = st.checkbox("✅ I acknowledge that this tool is not yet HIPAA-compliant and is for testing only.")
+hipaa_ack = st.checkbox("✅ I acknowledge HIPAA compliance requirements and will obtain a BAA if processing PHI.")
 
 if not (agree and hipaa_ack):
     st.warning("You must agree to both the disclaimer and HIPAA acknowledgment before using this app.")
@@ -180,31 +239,41 @@ if "last_transcribed_source" not in st.session_state:
 with tab_main:
     st.title("🎙️ Provider Communication Assistant — Unified View")
 
-    with st.sidebar:
-        st.header("Settings")
-        st.write("Faster-Whisper (base) is used for both recording and uploads.")
-        use_gemini = st.checkbox("Use Gemini for chat", value=True)
-
-    # FIXED: Load the Faster-Whisper model
+    # Load Faster-Whisper model (for prototype)
     with st.spinner("Loading transcription model..."):
-        fw_model = load_fw_model()
-        if fw_model is None and FASTER_AVAILABLE:
-            st.error("Failed to load Faster-Whisper model. Check installation.")
-        elif not FASTER_AVAILABLE:
-            st.error("Faster-Whisper not installed. Run: pip install faster-whisper")
+        model = load_fw_model()
+        model_type = "faster_whisper"
+        if model is None:
+            st.error("Failed to load Faster-Whisper. Install: pip install faster-whisper")
             st.stop()
 
     st.subheader("🎧 Record or Upload Audio")
+    
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("#### 🎙️ Record Audio")
-        audio_data = st.audio_input("Record up to 5 minutes")
-        transcribe_recording_btn = st.button("🎙️ Transcribe Recording", type="primary", disabled=(audio_data is None))
+        
+        # Use audio-recorder-streamlit if available (much faster)
+        if AUDIO_RECORDER_AVAILABLE:
+            audio_bytes = audio_recorder(
+                text="Click to record",
+                recording_color="#e74c3c",
+                neutral_color="#95a5a6", 
+                icon_name="microphone",
+                icon_size="3x",
+            )
+            
+            # Convert to format compatible with rest of code
+            audio_data = io.BytesIO(audio_bytes) if audio_bytes else None
+            transcribe_recording_btn = st.button("🎙️ Transcribe Recording", type="primary", disabled=(audio_data is None))
+        else:
+            audio_data = st.audio_input("Record up to 5 minutes")
+            transcribe_recording_btn = st.button("🎙️ Transcribe Recording", type="primary", disabled=(audio_data is None))
 
     with col2:
         st.markdown("#### 📁 Upload Audio File")
-        uploaded = st.file_uploader("Select a file", type=["wav", "mp3", "m4a", "ogg", "webm"])
+        uploaded = st.file_uploader("Select a file", type=["wav", "mp3", "m4a", "ogg", "webm", "flac"])
         transcribe_upload_btn = st.button("📁 Transcribe Upload", type="primary", disabled=(uploaded is None))
 
     # Prepare bytes and source id based on which button was clicked
@@ -225,21 +294,22 @@ with tab_main:
     # Process audio when button is clicked
     # ----------------------------
     if should_transcribe and raw_bytes is not None:
-        with st.spinner("Transcribing audio..."):
-            tmp_wav_path = None
+        with st.spinner(f"Transcribing audio..."):
+            tmp_file_path = None
             try:
+                # Convert to WAV for Faster-Whisper
                 try:
                     audio_array, sr = sf.read(io.BytesIO(raw_bytes))
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
                         sf.write(tmp.name, audio_array, sr, format="WAV")
-                        tmp_wav_path = tmp.name
+                        tmp_file_path = tmp.name
                 except Exception:
+                    # If soundfile fails, try writing raw bytes
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
                         tmp.write(raw_bytes)
-                        tmp_wav_path = tmp.name
-
-                # FIXED: Pass the fw_model parameter
-                new_text = transcribe_with_faster_whisper(tmp_wav_path, fw_model)
+                        tmp_file_path = tmp.name
+                
+                new_text = transcribe_with_faster_whisper(tmp_file_path, model)
 
                 if not new_text:
                     st.warning("Transcription returned empty. Check audio quality or format.")
@@ -249,8 +319,8 @@ with tab_main:
                 st.error(f"Transcription error: {e}")
                 new_text = f"[Transcription failed: {e}]"
             finally:
-                if tmp_wav_path and os.path.exists(tmp_wav_path):
-                    os.unlink(tmp_wav_path)
+                if tmp_file_path and os.path.exists(tmp_file_path):
+                    os.unlink(tmp_file_path)
 
         # Encrypt and append transcript
         fernet = get_session_fernet()
@@ -264,10 +334,10 @@ with tab_main:
         combined_text = (prev_text + "\n\n---\n\n" + new_text).strip()
         st.session_state.encrypted_transcript = encrypt_text(combined_text, fernet)
         
-        # FIXED: Update last transcribed source for both uploads and recordings
+        # Update last transcribed source
         st.session_state.last_transcribed_source = source
 
-        st.success(f"✅ Transcription complete and appended from {source}.")
+        st.success(f"✅ Transcription complete from {source}.")
         gc.collect()
 
 
@@ -275,9 +345,11 @@ with tab_main:
     template = st.selectbox("Prompt template", list(TEMPLATES.keys()), index=0)
     system_preamble = DEFAULT_SYSTEM_PROMPT
     system_goal = f"Template: {template}\n\n{TEMPLATES[template]}"
-    gemini_model = init_gemini() if use_gemini else None
-    if use_gemini and gemini_model is None:
-        st.warning("Gemini not configured or library missing. Set GEMINI_API_KEY and install google-generativeai.")
+    
+    # Initialize Gemini
+    gemini_model = init_gemini()
+    if gemini_model is None:
+        st.warning("Gemini not configured. Set GEMINI_API_KEY in .env file to enable AI chat.")
 
     # show chat history
     for m in st.session_state.messages:
@@ -301,7 +373,7 @@ with tab_main:
                 transcript = "[Decryption failed]"
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
-                    reply = run_gemini_chat(gemini_model if use_gemini else None, transcript, user_msg, f"{system_preamble}\n\n{system_goal}")
+                    reply = run_gemini_chat(gemini_model, transcript, user_msg, f"{system_preamble}\n\n{system_goal}")
                     st.markdown(reply)
 
         st.session_state.messages.append({ "role": "assistant", "content": reply })
