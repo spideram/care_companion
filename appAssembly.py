@@ -204,21 +204,27 @@ st.markdown(
 
 # Disclaimer
 st.markdown(
-    """<div style="background-color:#111111; color:#ffffff; border:1px solid #444; padding:15px; border-radius:10px;">
+    """
+    <div style="background-color:#111111; color:#ffffff; border:1px solid #444; padding:15px; border-radius:10px;">
     <strong>⚠️ Disclaimer:</strong><br>
-    This application records and transcribes audio for <b>clinical documentation assistance</b> only.
-    Please ensure you have obtained explicit consent from all participants before recording.
+    This application allows you to record and transcribe audio for <b>clinical documentation assistance</b> only.
+    Please ensure that <b>all participants explicitly consent</b> to being recorded.
     <br><br>
-    • <b>Data handling:</b> All audio and text data are processed and encrypted in-memory only during this session.<br>
-    • <b>Privacy notice:</b> This prototype is intended for demonstration and evaluation purposes and is not a substitute for official electronic medical record (EMR) or documentation systems.<br>
-    • <b>HIPAA compliance:</b> AssemblyAI transcription can be HIPAA-compliant when a Business Associate Agreement (BAA) is in place. Contact sales@assemblyai.com to request a BAA before using this tool with Protected Health Information (PHI).<br><br>
-    <em>By continuing, you acknowledge that you understand the data privacy implications and consent to the use of this prototype for testing and evaluation purposes only.</em>
-    </div>""",
-    unsafe_allow_html=True,
+
+    <ul style="margin-left:15px;">
+        <li><b>Data handling:</b> All audio and text data are processed <b>temporarily</b> during this session and <b>encrypted in memory</b>. No recordings or transcripts are permanently stored.</li>
+        <li><b>Privacy notice:</b> This prototype is for <b>testing and evaluation</b> purposes only and is <b>not a replacement</b> for an official electronic medical record (EMR) system.</li>
+        <li><b>Compliance status:</b> This tool is <b>not currently HIPAA-compliant</b> and should <b>not</b> be used to collect, store, or process <b>Protected Health Information (PHI)</b> in a clinical setting.</li>
+    </ul>
+
+    <em>By continuing, you acknowledge that you understand these limitations and agree to use this tool for non-production, evaluation purposes only.</em>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
 
 agree = st.checkbox("✅ I understand and agree to the recording disclaimer above.")
-hipaa_ack = st.checkbox("✅ I acknowledge HIPAA compliance requirements and will obtain a BAA if processing PHI.")
+hipaa_ack = st.checkbox("✅ I acknowledge HIPAA compliance.")
 
 if not (agree and hipaa_ack):
     st.warning("You must agree to both the disclaimer and HIPAA acknowledgment before using this app.")
@@ -262,6 +268,8 @@ with tab_main:
                 neutral_color="#95a5a6", 
                 icon_name="microphone",
                 icon_size="3x",
+                energy_threshold=(-1.0, 1.0),  # Always consider as "speaking"
+                pause_threshold=1800.0,
             )
             
             # Convert to format compatible with rest of code

@@ -1,363 +1,399 @@
-import os
-import gc
-import tempfile
-import subprocess
-import threading
-import re
-from typing import Optional
-
-import numpy as np
-import imageio_ffmpeg
-import whisper.audio
 import streamlit as st
-from dotenv import load_dotenv
-from cryptography.fernet import Fernet
-import google.generativeai as genai
+import streamlit.components.v1 as components
 
+st.set_page_config(page_title="Upload Widget Comparison", page_icon="📁", layout="wide")
 
-# ========== FFMPEG PATCH ==========
-ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-whisper.audio.load_audio = lambda path: np.frombuffer(
-    subprocess.run(
-        [
-            ffmpeg_path,
-            "-nostdin",
-            "-threads",
-            "0",
-            "-i",
-            path,
-            "-f",
-            "s16le",
-            "-ac",
-            "1",
-            "-acodec",
-            "pcm_s16le",
-            "-ar",
-            str(whisper.audio.SAMPLE_RATE),
-            "-",
-        ],
-        capture_output=True,
-        check=True,
-    ).stdout,
-    np.int16,
-).flatten().astype(np.float32) / 32768.0
-
-
-# ========== SETUP ==========
-load_dotenv()
-
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except Exception:
-    GEMINI_AVAILABLE = False
-
-
-# ========== WHISPER ==========
-@st.cache_resource(show_spinner=False)
-def load_whisper(model_size: str = "base"):
-    import whisper
-    return whisper.load_model(model_size)
-
-
-def transcribe_audio(tmp_path: str, model_size: str = "base") -> str:
-    model = load_whisper(model_size)
-    result = model.transcribe(tmp_path)
-    return result.get("text", "").strip()
-
-
-# ========== GEMINI ==========
-def init_gemini() -> Optional[object]:
-    if not GEMINI_AVAILABLE:
-        return None
-    api_key = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", None)
-    if not api_key:
-        return None
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-2.5-flash")
-
-
-def run_gemini_chat(model, transcript: str, user_prompt: str, system_preamble: str) -> str:
-    if model is None:
-        return "[Gemini not configured] Provide GEMINI_API_KEY to enable AI responses."
-    prompt = f"""{system_preamble}
-
----
-Encounter transcript (verbatim):
-{transcript}
-
----
-User request: {user_prompt}
-
-Return a concise, clinically useful answer with bullet points when appropriate.
-"""
-    try:
-        resp = model.generate_content(prompt)
-        return resp.text.strip()
-    except Exception as e:
-        return f"[Gemini error] {e}"
-
-
-# ========== ENCRYPTION ==========
-def get_session_fernet() -> Fernet:
-    if "fernet_key" not in st.session_state:
-        st.session_state.fernet_key = Fernet.generate_key()
-    return Fernet(st.session_state.fernet_key)
-
-
-def encrypt_text(plain_text: str, fernet: Fernet) -> bytes:
-    return fernet.encrypt(plain_text.encode("utf-8"))
-
-
-def decrypt_text(blob: bytes, fernet: Fernet) -> str:
-    return fernet.decrypt(blob).decode("utf-8", errors="ignore")
-
-
-# ========== TRANSCRIPT MANAGEMENT ==========
-def _normalize_text_for_comp(text: str) -> str:
-    """Normalize text for comparison to avoid duplicates."""
-    if text is None:
-        return ""
-    t = text.lower()
-    t = re.sub(r"[^\w\s]", "", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-
-def _get_last_segment() -> str:
-    """Return last appended segment from transcript."""
-    if not st.session_state.get("encrypted_transcript"):
-        return ""
-    try:
-        fernet = get_session_fernet()
-        full = decrypt_text(st.session_state.encrypted_transcript, fernet)
-        parts = [p.strip() for p in full.split("\n\n---\n\n") if p.strip()]
-        return parts[-1] if parts else ""
-    except Exception:
-        return ""
-
-
-def append_transcript(new_text: str, *, force_append: bool = False):
-    """Append new_text safely and skip duplicates."""
-    if not new_text:
-        return
-
-    last = _get_last_segment()
-    if not force_append:
-        if _normalize_text_for_comp(last) == _normalize_text_for_comp(new_text):
-            return  # skip duplicate
-
-    fernet = get_session_fernet()
-    prev_text = ""
-    if st.session_state.get("encrypted_transcript"):
-        try:
-            prev_text = decrypt_text(st.session_state.encrypted_transcript, fernet)
-        except Exception:
-            prev_text = ""
-    combined_text = (prev_text + "\n\n---\n\n" + new_text).strip() if prev_text else new_text.strip()
-    st.session_state.encrypted_transcript = encrypt_text(combined_text, fernet)
-
-
-# ========== PROMPTS ==========
-with open("prompts/prompt_start.txt", "r", encoding="utf-8") as f:
-    DEFAULT_SYSTEM_PROMPT = f.read()
-
-TEMPLATES = {
-    "Summary": "Summarize main concerns, pertinent positives/negatives, and proposed plan.",
-    "SOAP": "Produce a SOAP-style summary (Subjective, Objective, Assessment, Plan).",
-    "Follow-ups": "List 3–5 follow-up questions to clarify key uncertainties.",
-    "Patient education": "Draft a plain-language explanation and next steps for the patient.",
-}
-
-
-# ========== UI CONFIG ==========
-st.set_page_config(page_title="Provider Comms MVP", page_icon="🎙️", layout="wide")
-
+# Your app's dark theme
 st.markdown(
-    """
-    <style>
+    """<style>
     body, .stApp { background-color: #000000; color: #FFFFFF; }
     div[data-testid="stMarkdownContainer"] p, label, span, h1, h2, h3, h4 {
         color: #FFFFFF !important;
     }
+    </style>""",
+    unsafe_allow_html=True,
+)
+
+st.title("📁 File Upload Widget Options - Your App Style")
+st.markdown("Compare different upload styles to match your microphone recorder")
+st.markdown("---")
+
+# Show the microphone for reference
+st.markdown("### 🎙️ Your Current Recording Widget (For Reference)")
+try:
+    from audio_recorder_streamlit import audio_recorder
+    
+    st.markdown("""
+        <style>
+        .reference-recorder [data-testid="stVerticalBlock"] > div:has(audio-recorder) {
+            border: 1px dashed rgba(250, 250, 250, 0.4);
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            text-align: center;
+            background-color: rgba(38, 39, 48, 0.4);
+            min-height: 120px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        audio-recorder {
+            display: block;
+            margin: 0 auto;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    ref_col1, ref_col2, ref_col3 = st.columns([1, 1, 1])
+    with ref_col2:
+        with st.container():
+            audio_recorder(
+                text="",
+                recording_color="#e74c3c",
+                neutral_color="#6c757d",
+                icon_name="microphone",
+                icon_size="3x",
+                key="reference"
+            )
+            st.caption("This is what we want to match!")
+except:
+    st.info("Install audio-recorder-streamlit to see reference")
+
+st.markdown("---")
+st.markdown("### Now let's compare file upload options:")
+st.markdown("---")
+
+# ==================== OPTION A: Standard file_uploader ====================
+st.markdown("## Option A: Standard st.file_uploader")
+st.markdown("**The Traditional Drag & Drop Box**")
+
+st.markdown("""
+    <style>
+    /* Style the standard file uploader */
+    .optionA [data-testid="stFileUploader"] {
+        border: 1px dashed rgba(250, 250, 250, 0.4);
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        text-align: center;
+        background-color: rgba(38, 39, 48, 0.4);
+        min-height: 120px;
+    }
+    
+    .optionA [data-testid="stFileUploader"]:hover {
+        border-color: rgba(250, 250, 250, 0.6);
+    }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-
-# ========== DISCLAIMER ==========
-st.markdown(
-    """
-    <div style="background-color:#111111; color:#ffffff; border:1px solid #444; padding:15px; border-radius:10px;">
-    <strong>⚠️ Disclaimer:</strong><br>
-    This application records and transcribes audio for <b>clinical documentation assistance</b> only.
-    Please ensure you have obtained explicit consent from all participants before recording.
-    <br><br>
-    • <b>Data handling:</b> All audio and text data are processed and encrypted in-memory only during this session.<br>
-    • <b>Privacy notice:</b> This prototype is intended for demonstration and evaluation purposes and is not a substitute for official electronic medical record (EMR) or documentation systems.<br>
-    • <b>HIPAA compliance:</b> Please note that this tool is <b>not yet HIPAA-compliant</b>. We are actively in the process of implementing full HIPAA safeguards and compliance measures, including secure data storage, user authentication, and audit logging.<br><br>
-    <em>By continuing, you acknowledge that you understand the data privacy implications and consent to the use of this prototype for testing and evaluation purposes only.</em>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-agree = st.checkbox("✅ I understand and agree to the recording disclaimer above.")
-hipaa_ack = st.checkbox("✅ I acknowledge that this tool is not yet HIPAA-compliant and is for testing only.")
-
-if not (agree and hipaa_ack):
-    st.warning("You must agree to both the disclaimer and HIPAA acknowledgment before using this app.")
-    st.stop()
-
-
-# ========== TABS ==========
-tab_main, tab_debug = st.tabs(["🎙️ Chat & Recording", "🧩 Transcript Debug (DELETE BEFORE RELEASE)"])
-
-
-# ========== MAIN TAB ==========
-with tab_main:
-    st.title("🎙️ Provider Communication Assistant — Unified View")
-
-    with st.sidebar:
-        st.header("Settings")
-        whisper_size = st.selectbox(
-            "Whisper model",
-            options=["tiny", "base", "small", "medium"],
-            index=1,
-            help="Smaller = faster, lower accuracy.",
+col_a1, col_a2, col_a3 = st.columns([1, 2, 1])
+with col_a2:
+    with st.container():
+        st.markdown('<div class="optionA">', unsafe_allow_html=True)
+        upload_a = st.file_uploader(
+            "Drag and drop or browse files",
+            type=["wav", "mp3", "m4a", "ogg", "webm", "flac"],
+            key="upload_a",
+            label_visibility="collapsed"
         )
-        use_gemini = st.checkbox("Use Gemini for chat", value=True)
-        st.write("Encryption: **Always On** (session-scoped Fernet key)")
+        st.caption("Supported: WAV, MP3, M4A, OGG, WebM, FLAC")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # Initialize session vars
-    for key, val in {
-        "encrypted_transcript": None,
-        "messages": [],
-        "recording_thread": None,
-        "recording_status": "idle",
-    }.items():
-        st.session_state.setdefault(key, val)
+st.markdown("#### Pros & Cons:")
+col_pros_a1, col_pros_a2 = st.columns(2)
+with col_pros_a1:
+    st.markdown("""
+    ✅ **Native Streamlit** - Most reliable  
+    ✅ **Drag & drop** - Better UX  
+    ✅ **Shows file name** when selected  
+    ✅ **Fully customizable** with CSS
+    """)
+with col_pros_a2:
+    st.markdown("""
+    ❌ **Doesn't match microphone** - Rectangle vs Icon  
+    ❌ **Less symmetrical** - Different visual style  
+    ❌ **More text-heavy** - Not as clean/minimal
+    """)
 
-    st.subheader("🎧 Record or Upload Audio")
-    col1, col2 = st.columns(2)
+st.markdown("---")
 
-    with col1:
-        st.markdown("#### 🎙️ Record Audio")
-        audio_data = st.audio_input("Record up to 60 seconds")
+# ==================== OPTION B: Custom Icon Button ====================
+st.markdown("## Option B: Custom File Icon Button ⭐")
+st.markdown("**Icon-Based Design (Matches Microphone Perfectly!)**")
 
-    with col2:
-        st.markdown("#### 📁 Upload Audio File")
-        uploaded = st.file_uploader("Select a file", type=["wav", "mp3", "m4a", "ogg", "webm"])
+# Create custom file upload icon button
+st.markdown("""
+    <style>
+    .custom-file-upload {
+        border: 1px dashed rgba(250, 250, 250, 0.4);
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        text-align: center;
+        background-color: rgba(38, 39, 48, 0.4);
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        position: relative;
+    }
+    
+    .custom-file-upload:hover {
+        border-color: rgba(250, 250, 250, 0.6);
+        background-color: rgba(38, 39, 48, 0.6);
+    }
+    
+    .custom-file-upload input[type="file"] {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+    }
+    
+    .file-icon {
+        font-size: 48px;
+        color: #6c757d;
+        margin-bottom: 10px;
+    }
+    
+    .upload-text {
+        font-size: 14px;
+        color: rgba(250, 250, 250, 0.7);
+    }
+    
+    /* Style for when file is selected */
+    .file-selected {
+        color: #28a745;
+        margin-top: 10px;
+        font-size: 14px;
+    }
+    </style>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+""", unsafe_allow_html=True)
 
-    source, raw_bytes = None, None
-    if uploaded is not None:
-        raw_bytes = uploaded.read()
-        source = uploaded.name
-    elif audio_data is not None:
-        raw_bytes = audio_data.getvalue()
-        source = "Browser recording"
+col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
+with col_b2:
+    # Custom HTML file upload button
+    uploaded_file_b = components.html("""
+        <div class="custom-file-upload" onclick="document.getElementById('fileInput').click()">
+            <i class="fas fa-file-audio file-icon"></i>
+            <input type="file" id="fileInput" accept="audio/*" onchange="handleFileSelect(this)">
+            <div id="fileName" class="upload-text">Click to browse files</div>
+        </div>
+        
+        <script>
+        function handleFileSelect(input) {
+            const fileName = document.getElementById('fileName');
+            if (input.files.length > 0) {
+                fileName.innerHTML = `<span class="file-selected">✓ ${input.files[0].name}</span>`;
+                // Send file info back to Streamlit (if needed)
+                window.parent.postMessage({type: 'streamlit:setComponentValue', value: input.files[0].name}, '*');
+            }
+        }
+        </script>
+    """, height=150)
+    
+    st.caption("Matches the microphone icon style!")
 
-    # === BACKGROUND THREAD FOR RECORDING ===
-    def background_transcribe_recording(raw_bytes, source, whisper_size):
-        local_bytes = bytes(raw_bytes)
-        st.session_state.recording_status = f"Transcribing {source}..."
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            tmp.write(local_bytes)
-            tmp_path = tmp.name
-        try:
-            new_text = transcribe_audio(tmp_path, model_size=whisper_size)
-            append_transcript(new_text)
-            st.session_state.last_transcribed_source = f"{source}_{np.random.randint(1e6)}"
-            st.session_state.recording_status = f"✅ Recording transcription complete for {source}"
-        except Exception as e:
-            st.session_state.recording_status = f"[Transcription error: {e}]"
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-            st.session_state.recording_thread = None
-            gc.collect()
-            st.rerun()
+st.markdown("#### Pros & Cons:")
+col_pros_b1, col_pros_b2 = st.columns(2)
+with col_pros_b1:
+    st.markdown("""
+    ✅ **Perfect symmetry** - Matches microphone exactly  
+    ✅ **Icon-based** - Same visual style  
+    ✅ **Clean & minimal** - Professional look  
+    ✅ **Same size/border** - Perfect alignment
+    """)
+with col_pros_b2:
+    st.markdown("""
+    ⚠️ **No drag & drop** - Click only  
+    ⚠️ **Requires HTML/JS** - Slightly more complex  
+    ⚠️ **File handling** - Need to integrate with Streamlit
+    """)
 
-    # === HANDLE INPUTS ===
-    if raw_bytes is not None:
-        if source == "Browser recording":
-            if st.session_state.recording_thread is None or not st.session_state.recording_thread.is_alive():
-                st.session_state.recording_thread = threading.Thread(
-                    target=background_transcribe_recording,
-                    args=(raw_bytes, source, whisper_size),
-                    daemon=True,
-                )
-                st.session_state.recording_thread.start()
-                st.info("🎙️ Recording is being transcribed in the background.")
-            else:
-                st.warning("A recording is already being transcribed. Please wait.")
-        else:
-            # Handle uploads synchronously
-            suffix = ".wav" if source.lower().endswith(".wav") else ".mp3"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(raw_bytes)
-                tmp_path = tmp.name
-            with st.spinner("Transcribing uploaded file..."):
-                try:
-                    new_text = transcribe_audio(tmp_path, model_size=whisper_size)
-                    append_transcript(new_text)
-                    st.session_state.last_transcribed_source = source
-                    st.success(f"✅ Transcription complete and appended from {source}")
-                except Exception as e:
-                    st.error(f"[Transcription error] {e}")
-                finally:
-                    os.unlink(tmp_path)
-                    gc.collect()
+st.markdown("---")
 
-    if st.session_state.recording_status != "idle":
-        st.info(st.session_state.recording_status)
+# ==================== OPTION C: Hybrid Approach ====================
+st.markdown("## Option C: Hybrid - Icon + Small Upload Area")
+st.markdown("**Best of Both Worlds?**")
 
-    # === CHAT ===
-    template = st.selectbox("Prompt template", list(TEMPLATES.keys()), index=0)
-    system_preamble = DEFAULT_SYSTEM_PROMPT
-    system_goal = f"Template: {template}\n\n{TEMPLATES[template]}"
-    gemini_model = init_gemini() if use_gemini else None
+st.markdown("""
+    <style>
+    .hybrid-upload {
+        border: 1px dashed rgba(250, 250, 250, 0.4);
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        text-align: center;
+        background-color: rgba(38, 39, 48, 0.4);
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .hybrid-icon {
+        font-size: 36px;
+        color: #6c757d;
+        margin-bottom: 15px;
+    }
+    </style>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+""", unsafe_allow_html=True)
 
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
+with col_c2:
+    st.markdown('<div class="hybrid-upload">', unsafe_allow_html=True)
+    st.markdown('<i class="fas fa-file-audio hybrid-icon"></i>', unsafe_allow_html=True)
+    upload_c = st.file_uploader(
+        "Drag & drop or click",
+        type=["wav", "mp3", "m4a", "ogg", "webm", "flac"],
+        key="upload_c",
+        label_visibility="collapsed"
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    user_msg = st.chat_input("Ask about this encounter (e.g., 'Summarize main concerns')")
+st.markdown("#### Pros & Cons:")
+col_pros_c1, col_pros_c2 = st.columns(2)
+with col_pros_c1:
+    st.markdown("""
+    ✅ **Icon present** - Visual consistency  
+    ✅ **Drag & drop** - Maintains functionality  
+    ✅ **Native Streamlit** - Reliable backend  
+    ✅ **Good compromise** - Icon + upload area
+    """)
+with col_pros_c2:
+    st.markdown("""
+    ⚠️ **More cluttered** - Icon + text + upload UI  
+    ⚠️ **Not as clean** - Less minimalist  
+    ⚠️ **Taller height** - May not match perfectly
+    """)
 
-    if user_msg:
-        st.session_state.messages.append({"role": "user", "content": user_msg})
-        with st.chat_message("user"):
-            st.markdown(user_msg)
+st.markdown("---")
+st.markdown("---")
 
-        if st.session_state.encrypted_transcript is None:
-            reply = "Please record or upload audio before chatting."
-        else:
-            fernet = get_session_fernet()
-            transcript = decrypt_text(st.session_state.encrypted_transcript, fernet)
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    reply = run_gemini_chat(
-                        gemini_model if use_gemini else None,
-                        transcript=transcript,
-                        user_prompt=user_msg,
-                        system_preamble=f"{system_preamble}\n\n{system_goal}",
-                    )
-                    st.markdown(reply)
+# ==================== SIDE-BY-SIDE COMPARISON ====================
+st.markdown("## 🎨 Side-by-Side Comparison with Microphone")
 
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        gc.collect()
+comparison_col1, comparison_col2 = st.columns(2)
 
+with comparison_col1:
+    st.markdown("### 🎙️ Record Audio")
+    st.markdown("""
+        <div style="border: 1px dashed rgba(250, 250, 250, 0.4);
+                    border-radius: 0.5rem;
+                    padding: 1.5rem;
+                    text-align: center;
+                    background-color: rgba(38, 39, 48, 0.4);
+                    min-height: 120px;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;">
+            <i class="fas fa-microphone" style="font-size: 48px; color: #6c757d;"></i>
+        </div>
+    """, unsafe_allow_html=True)
+    st.caption("Click the microphone to start recording")
 
-# ========== DEBUG TAB ==========
-with tab_debug:
-    st.title("🧩 Transcript Debug")
-    st.warning("⚠️ FOR TESTING ONLY — DELETE THIS TAB BEFORE RELEASE.")
-    if st.session_state.get("encrypted_transcript"):
-        fernet = get_session_fernet()
-        decrypted = decrypt_text(st.session_state.encrypted_transcript, fernet)
-        st.text_area("Current Transcript (debug only):", value=decrypted, height=300)
-    else:
-        st.info("No transcript available yet.")
+with comparison_col2:
+    st.markdown("### 📁 Upload Audio File")
+    
+    option_choice = st.radio(
+        "Preview which option?",
+        ["Option A (Standard)", "Option B (Icon)", "Option C (Hybrid)"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    
+    if "Standard" in option_choice:
+        st.markdown("""
+            <div style="border: 1px dashed rgba(250, 250, 250, 0.4);
+                        border-radius: 0.5rem;
+                        padding: 1.5rem;
+                        text-align: center;
+                        background-color: rgba(38, 39, 48, 0.4);
+                        min-height: 120px;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: center;">
+                <div style="font-size: 14px; color: rgba(250, 250, 250, 0.7);">
+                    Drag and drop files here<br>
+                    <small>Limit 200MB per file • WAV, MP3, M4A</small>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        st.caption("❌ Doesn't match - text-heavy, no icon")
+        
+    elif "Icon" in option_choice:
+        st.markdown("""
+            <div style="border: 1px dashed rgba(250, 250, 250, 0.4);
+                        border-radius: 0.5rem;
+                        padding: 1.5rem;
+                        text-align: center;
+                        background-color: rgba(38, 39, 48, 0.4);
+                        min-height: 120px;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;">
+                <i class="fas fa-file-audio" style="font-size: 48px; color: #6c757d;"></i>
+            </div>
+        """, unsafe_allow_html=True)
+        st.caption("✅ Perfect match - same style as microphone!")
+        
+    else:  # Hybrid
+        st.markdown("""
+            <div style="border: 1px dashed rgba(250, 250, 250, 0.4);
+                        border-radius: 0.5rem;
+                        padding: 1.5rem;
+                        text-align: center;
+                        background-color: rgba(38, 39, 48, 0.4);
+                        min-height: 120px;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: center;
+                        align-items: center;">
+                <i class="fas fa-file-audio" style="font-size: 36px; color: #6c757d; margin-bottom: 10px;"></i>
+                <div style="font-size: 12px; color: rgba(250, 250, 250, 0.6);">
+                    Drag & drop or click
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        st.caption("⚠️ Good compromise - icon + functionality")
+
+st.markdown("---")
+
+# ==================== FINAL RECOMMENDATION ====================
+st.markdown("## 🏆 My Recommendation")
+
+rec_col1, rec_col2, rec_col3 = st.columns([1, 3, 1])
+with rec_col2:
+    st.markdown("""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    padding: 30px; 
+                    border-radius: 15px; 
+                    text-align: center;">
+            <h2 style="color: white; margin-top: 0;">Option B: Custom Icon Button ⭐</h2>
+            <p style="color: white; font-size: 18px; line-height: 1.8;">
+                <strong>Perfect visual symmetry with your microphone!</strong><br><br>
+                
+                Two identical boxes side-by-side:<br>
+                🎙️ Microphone Icon = Record<br>
+                📁 File Icon = Upload<br><br>
+                
+                Clean, modern, professional, and perfectly balanced.
+            </p>
+            <hr style="border-color: rgba(255,255,255,0.3); margin: 20px 0;">
+            <p style="color: white; font-size: 16px;">
+                <strong>Alternative:</strong> If you really need drag & drop, 
+                go with Option C (Hybrid), but Option B gives you the cleanest, 
+                most professional look that perfectly matches your recording widget.
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("---")
+st.success("**Ready to implement?** Let me know which option you want and I'll integrate it into your main app code!")
