@@ -3,6 +3,7 @@ import io
 import time
 import tempfile
 import gc
+import hashlib
 from typing import Optional
 
 import numpy as np
@@ -166,6 +167,13 @@ def decrypt_text(blob: bytes, fernet: Fernet) -> str:
     return fernet.decrypt(blob).decode("utf-8", errors="ignore")
 
 # ==========================
+# Helper to detect new audio
+# ==========================
+def get_audio_hash(audio_bytes: bytes) -> str:
+    """Generate hash of audio bytes to detect changes"""
+    return hashlib.md5(audio_bytes).hexdigest()
+
+# ==========================
 # Prompts & templates
 # ==========================
 PROMPT_FILE = "prompts/prompt_start.txt"
@@ -179,17 +187,17 @@ else:
         "Emphasize red flags, medication changes, follow-ups, and patient education points."
     )
 
-TEMPLATES = {
-    "Summary": "Summarize main concerns, pertinent positives/negatives, and proposed plan.",
-    "SOAP": "Produce a SOAP-style summary (Subjective, Objective, Assessment, Plan).",
-    "Follow-ups": "List 3–5 follow-up questions to clarify key uncertainties.",
-    "Patient education": "Draft a plain-language explanation and next steps for the patient.",
-}
+# TEMPLATES = {
+#     "Summary": "Summarize main concerns, pertinent positives/negatives, and proposed plan.",
+#     "SOAP": "Produce a SOAP-style summary (Subjective, Objective, Assessment, Plan).",
+#     "Follow-ups": "List 3–5 follow-up questions to clarify key uncertainties.",
+#     "Patient education": "Draft a plain-language explanation and next steps for the patient.",
+# }
 
 # ==========================
 # UI / Streamlit
 # ==========================
-st.set_page_config(page_title="Provider Comms MVP", page_icon="🎙️", layout="wide")
+st.set_page_config(page_title="Care Explained", page_icon="🎙️", layout="wide")
 
 # Dark background style
 st.markdown(
@@ -202,48 +210,46 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Disclaimer
-st.markdown(
-    """
-    <div style="background-color:#111111; color:#ffffff; border:1px solid #444; padding:15px; border-radius:10px;">
-    <strong>⚠️ Disclaimer:</strong><br>
-    This application allows you to record and transcribe audio for <b>clinical documentation assistance</b> only.
-    Please ensure that <b>all participants explicitly consent</b> to being recorded.
-    <br><br>
+# Collapsible Disclaimer
+with st.expander("⚠️ Important: Disclaimer & Privacy Notice", expanded=True):
+    st.markdown(
+        """
+        <div style="background-color:#111111; color:#ffffff; border:1px solid #444; padding:15px; border-radius:10px;">
+            <strong>⚠️ Disclaimer:</strong><br>
+            This application is currently under active development and the intended use is to help clarify medical terminology and care to users.
+            <br><br>
+            <ul style="margin-left:15px;">
+                <li><b>Data privacy:</b> All audio and text processed during this session are handled temporarily in memory and protected using end-to-end encryption. No recordings or transcripts are stored, transmitted externally, or retained after the session ends.</li>
+                <li><b>Operational status:</b> While we are implementing the required safeguards for protected health information, this application is not yet certified as HIPAA-compliant.</li>
+            </ul>
+            <em>By continuing, you acknowledge that you understand these limitations and agree to use this prototype solely for evaluation and non-production purposes.</em>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    agree = st.checkbox("✅ I understand and agree to the recording disclaimer above.")
+    # hipaa_ack = st.checkbox("✅ I acknowledge HIPAA compliance requirements and will obtain a BAA if processing PHI.")
 
-    <ul style="margin-left:15px;">
-        <li><b>Data handling:</b> All audio and text data are processed <b>temporarily</b> during this session and <b>encrypted in memory</b>. No recordings or transcripts are permanently stored.</li>
-        <li><b>Privacy notice:</b> This prototype is for <b>testing and evaluation</b> purposes only and is <b>not a replacement</b> for an official electronic medical record (EMR) system.</li>
-        <li><b>Compliance status:</b> This tool is <b>not currently HIPAA-compliant</b> and should <b>not</b> be used to collect, store, or process <b>Protected Health Information (PHI)</b> in a clinical setting.</li>
-    </ul>
-
-    <em>By continuing, you acknowledge that you understand these limitations and agree to use this tool for non-production, evaluation purposes only.</em>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-agree = st.checkbox("✅ I understand and agree to the recording disclaimer above.")
-hipaa_ack = st.checkbox("✅ I acknowledge HIPAA compliance.")
-
-if not (agree and hipaa_ack):
-    st.warning("You must agree to both the disclaimer and HIPAA acknowledgment before using this app.")
+# Check agreement status (outside expander so it doesn't force expansion)
+if "agree" not in locals() or not agree: #or not hipaa_ack
+    st.warning("⚠️ Please expand the disclaimer above and agree to both terms before using this app.")
     st.stop()
 
 # Tabs
-tab_main, tab_debug = st.tabs(["🎙️ Chat & Recording", "🧩 Transcript Debug (DELETE BEFORE RELEASE)"])
+tab_main = st.container()
 
 # Session defaults
 if "encrypted_transcript" not in st.session_state:
     st.session_state.encrypted_transcript = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "last_transcribed_source" not in st.session_state:
-    st.session_state.last_transcribed_source = None
+if "last_audio_hash" not in st.session_state:
+    st.session_state.last_audio_hash = None
 
 # ========== MAIN TAB ==========
 with tab_main:
-    st.title("🎙️ Provider Communication Assistant — Unified View")
+    st.title("Care Explained")
 
     # Load Faster-Whisper model (for prototype)
     with st.spinner("Loading transcription model..."):
@@ -253,106 +259,89 @@ with tab_main:
             st.error("Failed to load Faster-Whisper. Install: pip install faster-whisper")
             st.stop()
 
-    st.subheader("🎧 Record or Upload Audio")
+    st.markdown("#### Record Audio")
+    st.caption("Press the microphone to start/stop recording")
     
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### 🎙️ Record Audio")
+    # Use audio-recorder-streamlit if available (much faster)
+    if AUDIO_RECORDER_AVAILABLE:
+        audio_bytes = audio_recorder(
+            text="",  # No text, just icon
+            recording_color="#e74c3c",
+            neutral_color="#6c757d",
+            icon_name="microphone",
+            icon_size="3x",
+            # Fix: Disable auto-stop on silence for medical recordings
+            # Set energy_threshold to allow continuous recording
+            energy_threshold=(-1.0, 1.0),  # Always consider as "speaking"
+            pause_threshold=300.0,  # Allow up to 5 minutes of recording
+        )
         
-        # Use audio-recorder-streamlit if available (much faster)
-        if AUDIO_RECORDER_AVAILABLE:
-            audio_bytes = audio_recorder(
-                text="Click to record",
-                recording_color="#e74c3c",
-                neutral_color="#95a5a6", 
-                icon_name="microphone",
-                icon_size="3x",
-                energy_threshold=(-1.0, 1.0),  # Always consider as "speaking"
-                pause_threshold=1800.0,
-            )
+        # Convert to format compatible with rest of code
+        audio_data = audio_bytes if audio_bytes else None
+    else:
+        audio_data_input = st.audio_input("Record up to 5 minutes")
+        audio_data = audio_data_input.getvalue() if audio_data_input else None
+
+    # ----------------------------
+    # Auto-detect new recording and transcribe
+    # ----------------------------
+    if audio_data is not None:
+        current_hash = get_audio_hash(audio_data)
+        
+        # Check if this is a new recording
+        if current_hash != st.session_state.last_audio_hash:
+            st.session_state.last_audio_hash = current_hash
             
-            # Convert to format compatible with rest of code
-            audio_data = io.BytesIO(audio_bytes) if audio_bytes else None
-            transcribe_recording_btn = st.button("🎙️ Transcribe Recording", type="primary", disabled=(audio_data is None))
-        else:
-            audio_data = st.audio_input("Record up to 5 minutes")
-            transcribe_recording_btn = st.button("🎙️ Transcribe Recording", type="primary", disabled=(audio_data is None))
-
-    with col2:
-        st.markdown("#### 📁 Upload Audio File")
-        uploaded = st.file_uploader("Select a file", type=["wav", "mp3", "m4a", "ogg", "webm", "flac"])
-        transcribe_upload_btn = st.button("📁 Transcribe Upload", type="primary", disabled=(uploaded is None))
-
-    # Prepare bytes and source id based on which button was clicked
-    source, raw_bytes = None, None
-    should_transcribe = False
-    
-    # Check which button was clicked
-    if transcribe_upload_btn and uploaded is not None:
-        raw_bytes = uploaded.read()
-        source = f"upload:{uploaded.name}"
-        should_transcribe = True
-    elif transcribe_recording_btn and audio_data is not None:
-        raw_bytes = audio_data.getvalue() if hasattr(audio_data, "getvalue") else bytes(audio_data)
-        source = f"recording:{int(time.time()*1000)}"
-        should_transcribe = True
-
-    # ----------------------------
-    # Process audio when button is clicked
-    # ----------------------------
-    if should_transcribe and raw_bytes is not None:
-        with st.spinner(f"Transcribing audio..."):
-            tmp_file_path = None
-            try:
-                # Convert to WAV for Faster-Whisper
+            with st.spinner(f"Transcribing audio..."):
+                tmp_file_path = None
                 try:
-                    audio_array, sr = sf.read(io.BytesIO(raw_bytes))
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                        sf.write(tmp.name, audio_array, sr, format="WAV")
-                        tmp_file_path = tmp.name
+                    # Convert to WAV for Faster-Whisper
+                    try:
+                        audio_array, sr = sf.read(io.BytesIO(audio_data))
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                            sf.write(tmp.name, audio_array, sr, format="WAV")
+                            tmp_file_path = tmp.name
+                    except Exception:
+                        # If soundfile fails, try writing raw bytes
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                            tmp.write(audio_data)
+                            tmp_file_path = tmp.name
+                    
+                    new_text = transcribe_with_faster_whisper(tmp_file_path, model)
+
+                    if not new_text:
+                        st.warning("Transcription returned empty. Check audio quality or format.")
+                        new_text = "[No speech detected in audio]"
+
+                except Exception as e:
+                    st.error(f"Transcription error: {e}")
+                    new_text = f"[Transcription failed: {e}]"
+                finally:
+                    if tmp_file_path and os.path.exists(tmp_file_path):
+                        os.unlink(tmp_file_path)
+
+            # Encrypt and append transcript
+            fernet = get_session_fernet()
+            prev_text = ""
+            if st.session_state.get("encrypted_transcript"):
+                try:
+                    prev_text = decrypt_text(st.session_state.encrypted_transcript, fernet)
                 except Exception:
-                    # If soundfile fails, try writing raw bytes
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                        tmp.write(raw_bytes)
-                        tmp_file_path = tmp.name
-                
-                new_text = transcribe_with_faster_whisper(tmp_file_path, model)
+                    pass
 
-                if not new_text:
-                    st.warning("Transcription returned empty. Check audio quality or format.")
-                    new_text = "[No speech detected in audio]"
+            combined_text = (prev_text + "\n\n---\n\n" + new_text).strip()
+            st.session_state.encrypted_transcript = encrypt_text(combined_text, fernet)
 
-            except Exception as e:
-                st.error(f"Transcription error: {e}")
-                new_text = f"[Transcription failed: {e}]"
-            finally:
-                if tmp_file_path and os.path.exists(tmp_file_path):
-                    os.unlink(tmp_file_path)
-
-        # Encrypt and append transcript
-        fernet = get_session_fernet()
-        prev_text = ""
-        if st.session_state.get("encrypted_transcript"):
-            try:
-                prev_text = decrypt_text(st.session_state.encrypted_transcript, fernet)
-            except Exception:
-                pass
-
-        combined_text = (prev_text + "\n\n---\n\n" + new_text).strip()
-        st.session_state.encrypted_transcript = encrypt_text(combined_text, fernet)
-        
-        # Update last transcribed source
-        st.session_state.last_transcribed_source = source
-
-        st.success(f"✅ Transcription complete from {source}.")
-        gc.collect()
+            st.success(f"✅ Transcription complete!")
+            gc.collect()
+            st.rerun()
 
 
     # Chat UI
-    template = st.selectbox("Prompt template", list(TEMPLATES.keys()), index=0)
+    # template = st.selectbox("Prompt template", list(TEMPLATES.keys()), index=0)
     system_preamble = DEFAULT_SYSTEM_PROMPT
-    system_goal = f"Template: {template}\n\n{TEMPLATES[template]}"
+    system_goal = "Summary: Summarize main concerns, pertinent positives/negatives, and proposed plan."
+    # system_goal = f"Template: {template}\n\n{TEMPLATES[template]}"
     
     # Initialize Gemini
     gemini_model = init_gemini()
@@ -386,17 +375,3 @@ with tab_main:
 
         st.session_state.messages.append({ "role": "assistant", "content": reply })
         gc.collect()
-
-# ========== DEBUG TAB ==========
-with tab_debug:
-    st.title("🧩 Transcript Debug")
-    st.warning("⚠️ FOR TESTING ONLY — DELETE THIS TAB BEFORE RELEASE.")
-    if st.session_state.get("encrypted_transcript"):
-        f = get_session_fernet()
-        try:
-            decrypted = decrypt_text(st.session_state.encrypted_transcript, f)
-        except Exception:
-            decrypted = "[decrypt failed]"
-        st.text_area("Current Transcript (debug only):", value=decrypted, height=300)
-    else:
-        st.info("No transcript available yet.")
