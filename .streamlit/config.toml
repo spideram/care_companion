@@ -1,0 +1,19 @@
+[server]
+# Allow uploads up to 1 GB
+# maxUploadSize = 1000
+
+# Optional: suppress server logs to keep console clean
+enableXsrfProtection = true
+headless = true
+
+# Prevent the "page unresponsive" feeling slightly by tweaking timeouts
+fileWatcherType = "none"
+runOnSave = false
+
+[theme]
+base = "dark"
+primaryColor = "#00BFFF"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#111111"
+textColor = "#FFFFFF"
+
