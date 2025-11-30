@@ -187,24 +187,48 @@ else:
         "Emphasize red flags, medication changes, follow-ups, and patient education points."
     )
 
-# TEMPLATES = {
-#     "Summary": "Summarize main concerns, pertinent positives/negatives, and proposed plan.",
-#     "SOAP": "Produce a SOAP-style summary (Subjective, Objective, Assessment, Plan).",
-#     "Follow-ups": "List 3–5 follow-up questions to clarify key uncertainties.",
-#     "Patient education": "Draft a plain-language explanation and next steps for the patient.",
-# }
-
 # ==========================
 # UI / Streamlit
 # ==========================
 st.set_page_config(page_title="Care Explained", page_icon="🎙️", layout="wide")
 
-# Dark background style
+# Dark background style with centered elements
 st.markdown(
     """<style>
     body, .stApp { background-color: #000000; color: #FFFFFF; }
     div[data-testid="stMarkdownContainer"] p, label, span, h1, h2, h3, h4 {
         color: #FFFFFF !important;
+    }
+    /* Center the title */
+    div[data-testid="stMarkdownContainer"] h1 {
+        text-align: center !important;
+    }
+    /* Center the "Record Audio" heading */
+    div[data-testid="stMarkdownContainer"] h4 {
+        text-align: center !important;
+    }
+    /* Center the caption */
+    div[data-testid="stCaptionContainer"] {
+        text-align: center !important;
+    }
+    /* Center the audio recorder widget */
+    .stAudio, div[data-testid="stAudio"] {
+        display: flex !important;
+        justify-content: center !important;
+    }
+    /* Center audio recorder streamlit component */
+    div[data-testid="stVerticalBlock"] > div:has(.stAudio) {
+        display: flex !important;
+        justify-content: center !important;
+    }
+    /* Target the audio recorder iframe container */
+    iframe[title="audio_recorder_streamlit.audio_recorder"] {
+        margin: 0 auto !important;
+        display: block !important;
+    }
+    /* Add 60px spacing between audio recorder and chat */
+    .audio-chat-spacer {
+        height: 60px;
     }
     </style>""",
     unsafe_allow_html=True,
@@ -229,10 +253,9 @@ with st.expander("⚠️ Important: Disclaimer & Privacy Notice", expanded=True)
     )
     
     agree = st.checkbox("✅ I understand and agree to the recording disclaimer above.")
-    # hipaa_ack = st.checkbox("✅ I acknowledge HIPAA compliance requirements and will obtain a BAA if processing PHI.")
 
 # Check agreement status (outside expander so it doesn't force expansion)
-if "agree" not in locals() or not agree: #or not hipaa_ack
+if "agree" not in locals() or not agree:
     st.warning("⚠️ Please expand the disclaimer above and agree to both terms before using this app.")
     st.stop()
 
@@ -262,25 +285,29 @@ with tab_main:
     st.markdown("#### Record Audio")
     st.caption("Press the microphone to start/stop recording")
     
-    # Use audio-recorder-streamlit if available (much faster)
-    if AUDIO_RECORDER_AVAILABLE:
-        audio_bytes = audio_recorder(
-            text="",  # No text, just icon
-            recording_color="#e74c3c",
-            neutral_color="#6c757d",
-            icon_name="microphone",
-            icon_size="3x",
-            # Fix: Disable auto-stop on silence for medical recordings
-            # Set energy_threshold to allow continuous recording
-            energy_threshold=(-1.0, 1.0),  # Always consider as "speaking"
-            pause_threshold=300.0,  # Allow up to 5 minutes of recording
-        )
-        
-        # Convert to format compatible with rest of code
-        audio_data = audio_bytes if audio_bytes else None
-    else:
-        audio_data_input = st.audio_input("Record up to 5 minutes")
-        audio_data = audio_data_input.getvalue() if audio_data_input else None
+    # Use 3 columns to center the audio recorder (narrow middle column for better centering)
+    col1, col2, col3 = st.columns([2.3, 0.5, 2])
+    
+    with col2:
+        # Use audio-recorder-streamlit if available (much faster)
+        if AUDIO_RECORDER_AVAILABLE:
+            audio_bytes = audio_recorder(
+                text="",  # No text, just icon
+                recording_color="#e74c3c",
+                neutral_color="#6c757d",
+                icon_name="microphone",
+                icon_size="3x",
+                # Fix: Disable auto-stop on silence for medical recordings
+                # Set energy_threshold to allow continuous recording
+                energy_threshold=(-1.0, 1.0),  # Always consider as "speaking"
+                pause_threshold=300.0,  # Allow up to 5 minutes of recording
+            )
+            
+            # Convert to format compatible with rest of code
+            audio_data = audio_bytes if audio_bytes else None
+        else:
+            audio_data_input = st.audio_input("Record up to 5 minutes")
+            audio_data = audio_data_input.getvalue() if audio_data_input else None
 
     # ----------------------------
     # Auto-detect new recording and transcribe
@@ -336,12 +363,12 @@ with tab_main:
             gc.collect()
             st.rerun()
 
+    # Add 60px spacing before chat section
+    st.markdown('<div class="audio-chat-spacer"></div>', unsafe_allow_html=True)
 
     # Chat UI
-    # template = st.selectbox("Prompt template", list(TEMPLATES.keys()), index=0)
     system_preamble = DEFAULT_SYSTEM_PROMPT
     system_goal = "Summary: Summarize main concerns, pertinent positives/negatives, and proposed plan."
-    # system_goal = f"Template: {template}\n\n{TEMPLATES[template]}"
     
     # Initialize Gemini
     gemini_model = init_gemini()
