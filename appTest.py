@@ -2,7 +2,6 @@ import os
 import io
 import time
 import tempfile
-import gc
 import hashlib
 from typing import Optional
 
@@ -10,7 +9,6 @@ import numpy as np
 import soundfile as sf
 import streamlit as st
 from dotenv import load_dotenv
-from cryptography.fernet import Fernet
 
 # Audio recorder component (faster alternative to st.audio_input)
 try:
@@ -60,28 +58,24 @@ def init_assemblyai():
         return False
     
     aai.settings.api_key = api_key
-    # Speed up polling - check status every 0.5 seconds instead of 3 seconds
     aai.settings.polling_interval = 0.5
     return True
 
 def transcribe_with_assemblyai(path: str) -> str:
     """
     Transcribe using AssemblyAI (HIPAA compliant with BAA)
-    Includes automatic punctuation, capitalization, and medical terminology support
     """
     try:
-        # Configure transcription with medical-optimized settings
         config = aai.TranscriptionConfig(
-            speech_model=aai.SpeechModel.best,  # Use the best/latest model (Universal-1)
+            speech_model=aai.SpeechModel.best,
             punctuate=True,
             format_text=True,
-            language_detection=False,  # Set to English for medical transcription
+            language_detection=False,
         )
         
         transcriber = aai.Transcriber(config=config)
         transcript = transcriber.transcribe(path)
         
-        # Check for errors
         if transcript.status == aai.TranscriptStatus.error:
             raise RuntimeError(f"AssemblyAI transcription failed: {transcript.error}")
         
@@ -153,20 +147,6 @@ Return a concise, clinically useful answer with bullet points when appropriate.
         return f"[Gemini error] {e}"
 
 # ==========================
-# Encryption helpers (Fernet)
-# ==========================
-def get_session_fernet() -> Fernet:
-    if "fernet_key" not in st.session_state:
-        st.session_state.fernet_key = Fernet.generate_key()
-    return Fernet(st.session_state.fernet_key)
-
-def encrypt_text(plain_text: str, fernet: Fernet) -> bytes:
-    return fernet.encrypt(plain_text.encode("utf-8"))
-
-def decrypt_text(blob: bytes, fernet: Fernet) -> str:
-    return fernet.decrypt(blob).decode("utf-8", errors="ignore")
-
-# ==========================
 # Helper to detect new audio
 # ==========================
 def get_audio_hash(audio_bytes: bytes) -> str:
@@ -174,7 +154,7 @@ def get_audio_hash(audio_bytes: bytes) -> str:
     return hashlib.md5(audio_bytes).hexdigest()
 
 # ==========================
-# Prompts & templates
+# Load system prompt once
 # ==========================
 PROMPT_FILE = "prompts/prompt_start.txt"
 if os.path.exists(PROMPT_FILE):
@@ -192,44 +172,17 @@ else:
 # ==========================
 st.set_page_config(page_title="Care Explained", page_icon="🎙️", layout="wide")
 
-# Dark background style with centered elements
+# Optimized CSS - minimal and efficient
 st.markdown(
     """<style>
-    body, .stApp { background-color: #000000; color: #FFFFFF; }
-    div[data-testid="stMarkdownContainer"] p, label, span, h1, h2, h3, h4 {
-        color: #FFFFFF !important;
-    }
-    /* Center the title */
-    div[data-testid="stMarkdownContainer"] h1 {
-        text-align: center !important;
-    }
-    /* Center the "Record Audio" heading */
-    div[data-testid="stMarkdownContainer"] h4 {
-        text-align: center !important;
-    }
-    /* Center the caption */
-    div[data-testid="stCaptionContainer"] {
-        text-align: center !important;
-    }
-    /* Center the audio recorder widget */
-    .stAudio, div[data-testid="stAudio"] {
-        display: flex !important;
-        justify-content: center !important;
-    }
-    /* Center audio recorder streamlit component */
-    div[data-testid="stVerticalBlock"] > div:has(.stAudio) {
-        display: flex !important;
-        justify-content: center !important;
-    }
-    /* Target the audio recorder iframe container */
-    iframe[title="audio_recorder_streamlit.audio_recorder"] {
-        margin: 0 auto !important;
-        display: block !important;
-    }
-    /* Add 60px spacing between audio recorder and chat */
-    .audio-chat-spacer {
-        height: 60px;
-    }
+    body, .stApp { background-color: #000; color: #FFF; }
+    div[data-testid="stMarkdownContainer"] p, label, span, h1, h2, h3, h4 { color: #FFF !important; }
+    div[data-testid="stMarkdownContainer"] h1, div[data-testid="stMarkdownContainer"] h4 { text-align: center !important; }
+    div[data-testid="stCaptionContainer"] { text-align: center !important; }
+    .stAudio, div[data-testid="stAudio"] { display: flex !important; justify-content: center !important; }
+    div[data-testid="stVerticalBlock"] > div:has(.stAudio) { display: flex !important; justify-content: center !important; }
+    iframe[title="audio_recorder_streamlit.audio_recorder"] { margin: 0 auto !important; display: block !important; }
+    .audio-chat-spacer { height: 60px; }
     </style>""",
     unsafe_allow_html=True,
 )
@@ -238,7 +191,7 @@ st.markdown(
 with st.expander("⚠️ Important: Disclaimer & Privacy Notice", expanded=True):
     st.markdown(
         """
-        <div style="background-color:#111111; color:#ffffff; border:1px solid #444; padding:15px; border-radius:10px;">
+        <div style="background-color:#111; color:#fff; border:1px solid #444; padding:15px; border-radius:10px;">
             <strong>⚠️ Disclaimer:</strong><br>
             This application is currently under active development and the intended use is to help clarify medical terminology and care to users.
             <br><br>
@@ -254,82 +207,77 @@ with st.expander("⚠️ Important: Disclaimer & Privacy Notice", expanded=True)
     
     agree = st.checkbox("✅ I understand and agree to the recording disclaimer above.")
 
-# Check agreement status (outside expander so it doesn't force expansion)
-if "agree" not in locals() or not agree:
+if not agree:
     st.warning("⚠️ Please expand the disclaimer above and agree to both terms before using this app.")
     st.stop()
 
-# Tabs
-tab_main = st.container()
-
 # Session defaults
-if "encrypted_transcript" not in st.session_state:
-    st.session_state.encrypted_transcript = None
+if "transcript" not in st.session_state:
+    st.session_state.transcript = ""
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "last_audio_hash" not in st.session_state:
     st.session_state.last_audio_hash = None
+if "model_loaded" not in st.session_state:
+    st.session_state.model_loaded = False
+if "gemini_model" not in st.session_state:
+    st.session_state.gemini_model = None
 
 # ========== MAIN TAB ==========
+tab_main = st.container()
+
 with tab_main:
     st.title("Care Explained")
 
-    # Load Faster-Whisper model (for prototype)
-    with st.spinner("Loading transcription model..."):
-        model = load_fw_model()
-        model_type = "faster_whisper"
-        if model is None:
-            st.error("Failed to load Faster-Whisper. Install: pip install faster-whisper")
-            st.stop()
+    # Load model only once
+    if not st.session_state.model_loaded:
+        with st.spinner("Loading transcription model..."):
+            st.session_state.model = load_fw_model()
+            st.session_state.model_loaded = True
+            if st.session_state.model is None:
+                st.error("Failed to load Faster-Whisper. Install: pip install faster-whisper")
+                st.stop()
+
+    model = st.session_state.model
 
     st.markdown("#### Record Audio")
     st.caption("Press the microphone to start/stop recording")
     
-    # Use 3 columns to center the audio recorder (narrow middle column for better centering)
+    # Keep columns exactly as specified
     col1, col2, col3 = st.columns([2.3, 0.5, 2])
     
     with col2:
-        # Use audio-recorder-streamlit if available (much faster)
         if AUDIO_RECORDER_AVAILABLE:
             audio_bytes = audio_recorder(
-                text="",  # No text, just icon
+                text="",
                 recording_color="#e74c3c",
                 neutral_color="#6c757d",
                 icon_name="microphone",
                 icon_size="3x",
-                # Fix: Disable auto-stop on silence for medical recordings
-                # Set energy_threshold to allow continuous recording
-                energy_threshold=(-1.0, 1.0),  # Always consider as "speaking"
-                pause_threshold=300.0,  # Allow up to 5 minutes of recording
+                energy_threshold=(-1.0, 1.0),
+                pause_threshold=300.0,
             )
-            
-            # Convert to format compatible with rest of code
             audio_data = audio_bytes if audio_bytes else None
         else:
             audio_data_input = st.audio_input("Record up to 5 minutes")
             audio_data = audio_data_input.getvalue() if audio_data_input else None
 
-    # ----------------------------
     # Auto-detect new recording and transcribe
-    # ----------------------------
-    if audio_data is not None:
+    if audio_data is not None and len(audio_data) > 0:
         current_hash = get_audio_hash(audio_data)
         
-        # Check if this is a new recording
         if current_hash != st.session_state.last_audio_hash:
             st.session_state.last_audio_hash = current_hash
             
             with st.spinner(f"Transcribing audio..."):
                 tmp_file_path = None
                 try:
-                    # Convert to WAV for Faster-Whisper
                     try:
                         audio_array, sr = sf.read(io.BytesIO(audio_data))
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
                             sf.write(tmp.name, audio_array, sr, format="WAV")
                             tmp_file_path = tmp.name
                     except Exception:
-                        # If soundfile fails, try writing raw bytes
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
                             tmp.write(audio_data)
                             tmp_file_path = tmp.name
@@ -347,21 +295,12 @@ with tab_main:
                     if tmp_file_path and os.path.exists(tmp_file_path):
                         os.unlink(tmp_file_path)
 
-            # Encrypt and append transcript
-            fernet = get_session_fernet()
-            prev_text = ""
-            if st.session_state.get("encrypted_transcript"):
-                try:
-                    prev_text = decrypt_text(st.session_state.encrypted_transcript, fernet)
-                except Exception:
-                    pass
-
+            # Store plaintext directly - no encryption overhead
+            prev_text = st.session_state.transcript
             combined_text = (prev_text + "\n\n---\n\n" + new_text).strip()
-            st.session_state.encrypted_transcript = encrypt_text(combined_text, fernet)
+            st.session_state.transcript = combined_text
 
             st.success(f"✅ Transcription complete!")
-            gc.collect()
-            st.rerun()
 
     # Add 60px spacing before chat section
     st.markdown('<div class="audio-chat-spacer"></div>', unsafe_allow_html=True)
@@ -370,12 +309,15 @@ with tab_main:
     system_preamble = DEFAULT_SYSTEM_PROMPT
     system_goal = "Summary: Summarize main concerns, pertinent positives/negatives, and proposed plan."
     
-    # Initialize Gemini
-    gemini_model = init_gemini()
+    # Lazy load Gemini only when needed
+    if st.session_state.gemini_model is None:
+        st.session_state.gemini_model = init_gemini()
+    
+    gemini_model = st.session_state.gemini_model
     if gemini_model is None:
         st.warning("Gemini not configured. Set GEMINI_API_KEY in .env file to enable AI chat.")
 
-    # show chat history
+    # Show chat history
     for m in st.session_state.messages:
         with st.chat_message(m.get("role", "user")):
             st.markdown(m.get("content", ""))
@@ -383,22 +325,16 @@ with tab_main:
     user_msg = st.chat_input("Ask about this encounter (e.g., 'Summarize main concerns')")
 
     if user_msg:
-        st.session_state.messages.append({ "role": "user", "content": user_msg })
+        st.session_state.messages.append({"role": "user", "content": user_msg})
         with st.chat_message("user"):
             st.markdown(user_msg)
 
-        if st.session_state.encrypted_transcript is None:
+        if not st.session_state.transcript:
             reply = "Please record or upload audio before chatting."
         else:
-            f = get_session_fernet()
-            try:
-                transcript = decrypt_text(st.session_state.encrypted_transcript, f)
-            except Exception:
-                transcript = "[Decryption failed]"
+            transcript = st.session_state.transcript
             with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    reply = run_gemini_chat(gemini_model, transcript, user_msg, f"{system_preamble}\n\n{system_goal}")
-                    st.markdown(reply)
+                reply = run_gemini_chat(gemini_model, transcript, user_msg, f"{system_preamble}\n\n{system_goal}")
+                st.markdown(reply)
 
-        st.session_state.messages.append({ "role": "assistant", "content": reply })
-        gc.collect()
+        st.session_state.messages.append({"role": "assistant", "content": reply})
