@@ -196,7 +196,7 @@ with st.expander("⚠️ Important: Disclaimer & Privacy Notice", expanded=True)
             This application helps explain medical terms from your visit. It is not medical advice and should not be used for emergencies.
             <br><br>
             <ul style="margin-left:15px;">
-                <li><b>Data privacy:</b> A All audio and text processed during this session are handled temporarily in memory and protected using end-to-end encryption. No recordings or transcripts are stored, transmitted externally, or retained after the session ends.</li>
+                <li><b>Data privacy:</b> All audio and text processed during this session are handled temporarily in memory and protected using end-to-end encryption. No recordings or transcripts are stored, transmitted externally, or retained after the session ends.</li>
                 <li><b>Operational status:</b> While we are finalizing the required safeguards for protected health information, this application is not yet certified as HIPAA-compliant.</li>
             </ul>
             <em>By continuing, you confirm that you (and anyone whose voice is captured) consent to being recorded for the limited purpose of generating visit-related explanations.</em>
