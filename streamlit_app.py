@@ -1,14 +1,14 @@
-import os
-import io
+import os # Gets prompt file and .env file
+import io #gets bites from audio data for temp file
 import time
-import tempfile
-import hashlib
+import tempfile # makes .wav file from recording so that we can transcribe
+import hashlib # ^
 from typing import Optional
 
 import numpy as np
 import soundfile as sf
 import streamlit as st
-from dotenv import load_dotenv
+from dotenv import load_dotenv #loads.env
 
 # Audio recorder component (faster alternative to st.audio_input)
 try:
@@ -19,6 +19,7 @@ except Exception:
     AUDIO_RECORDER_AVAILABLE = False
 
 # AssemblyAI import (preferred - HIPAA compliant)
+# Default
 try:
     import assemblyai as aai
     ASSEMBLYAI_AVAILABLE = True
@@ -34,7 +35,7 @@ except Exception:
     WhisperModel = None
     FASTER_AVAILABLE = False
 
-# Optional Gemini import
+# Gemini import
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
