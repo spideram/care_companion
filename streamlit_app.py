@@ -1,5 +1,5 @@
 import os # Gets prompt file and .env file
-import io #gets bites from audio data for temp file
+import io # gets bites from audio data for temp file
 import time
 import tempfile # makes .wav file from recording so that we can transcribe
 import hashlib # ^
@@ -54,7 +54,7 @@ def init_assemblyai():
     if not ASSEMBLYAI_AVAILABLE:
         return False
     
-    api_key = os.getenv("ASSEMBLYAI_API_KEY") or st.secrets.get("ASSEMBLYAI_API_KEY", None)
+    api_key = os.getenv("ASSEMBLYAI_API_KEY") or st.secrets.get("ASSEMBLYAI_API_KEY", None) # gets API key
     if not api_key:
         return False
     
@@ -115,10 +115,11 @@ def transcribe_with_faster_whisper(path: str, fw_model) -> str:
 def init_gemini() -> Optional[object]:
     if not GEMINI_AVAILABLE:
         return None
-    api_key = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", None)
+    api_key = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", None) #gets Gemini API key
     if not api_key:
         return None
     genai.configure(api_key=api_key)
+    # gets Gemini model. Default is Gemini 2.5.
     try:
         return genai.GenerativeModel("gemini-2.5-flash")
     except Exception:
@@ -128,6 +129,8 @@ def init_gemini() -> Optional[object]:
             return None
 
 def run_gemini_chat(model, transcript: str, user_prompt: str, system_preamble: str) -> str:
+    '''system_preamble: starts prompt
+    function allows user to chat with AI'''
     if model is None:
         return "[Gemini not configured] Provide GEMINI_API_KEY to enable AI responses."
     prompt = f"""{system_preamble}
@@ -141,6 +144,7 @@ User request: {user_prompt}
 
 Return a concise, clinically useful answer with bullet points when appropriate.
 """
+    # review
     try:
         resp = model.generate_content(prompt)
         return resp.text.strip()
