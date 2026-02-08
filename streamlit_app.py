@@ -1,7 +1,7 @@
 import os # Gets prompt file and .env file
 import io # Gets bites from audio data for temp file
 import time
-import tempfile # makes .wav file from recording so that we can transcribe
+import tempfile # Makes .wav file from recording so that we can transcribe
 import hashlib # ^
 from typing import Optional
 
